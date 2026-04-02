@@ -8,6 +8,9 @@
  *   2. BYC savings vault   — shows the savings interest rate depositors earn.
  *
  * Data source: https://api.circuitdao.com/protocol/stats
+ * The values reported here can be independently verified by running the Circuit block scanner:
+ * https://github.com/circuitdao/circuit-analytics
+ *
  * Units in the API:
  *   - BYC values: mBYC (milli-BYC); divide by 1000 to get BYC = USD (1 BYC = $1)
  *   - XCH values: mojos; divide by 1e12 to get XCH

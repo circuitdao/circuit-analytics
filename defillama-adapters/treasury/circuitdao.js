@@ -7,6 +7,9 @@
  *
  * The protocol treasury holds BYC (Circuit's USD-pegged stablecoin). Its balance is tracked
  * on-chain and exposed via the Circuit stats API as `treasury_balance` in mBYC (1 BYC = 1000 mBYC = 1 USD).
+ *
+ * The values reported here can be independently verified by running the Circuit block scanner:
+ * https://github.com/circuitdao/circuit-analytics
  */
 
 const { get } = require("../helper/http");

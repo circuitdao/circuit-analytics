@@ -9,6 +9,9 @@
  *
  * Data source: https://api.circuitdao.com/protocol/stats
  * All BYC amounts in the API are in mBYC (milli-BYC). 1 BYC = 1000 mBYC = 1 USD.
+ *
+ * The values reported here can be independently verified by running the Circuit block scanner:
+ * https://github.com/circuitdao/circuit-analytics
  */
 
 import { fetchURL } from "../utils/fetchURL";
