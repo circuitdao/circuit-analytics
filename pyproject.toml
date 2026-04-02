@@ -1,0 +1,37 @@
+[tool.poetry]
+name = "circuit-analytics"
+version = "0.1.0"
+description = "Circuit protocol analytics: block scanner and protocol math for independent verification"
+authors = ["trepca <set@circuitdao.com>", "nimcon <nin@circuitdao.com>"]
+packages = [{ include = "circuit_analytics" }]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.14"
+chia-blockchain = "2.5.7"
+circuit-puzzles = { url = "https://github.com/circuitdao/puzzles/releases/download/v4.4.0/circuit_puzzles-4.4.0-py3-none-any.whl" }
+fastapi = ">=0.115.0"
+uvicorn = { version = ">=0.32.0", extras = ["standard"] }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.2"
+pytest-asyncio = "^1.3.0"
+ruff = "^0.14.9"
+pytest-timeout = "^2.4.0"
+
+[tool.poetry.scripts]
+circuit-scan = "circuit_analytics.scanner.cli:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 120
+fix = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-m 'not integration'"
+markers = [
+    "integration: full on-chain integration tests (require a live Chia full node)",
+]

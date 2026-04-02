@@ -1,0 +1,390 @@
+from typing import Optional
+
+from chia.types.blockchain_format.program import Program
+from chia.wallet.cat_wallet.cat_utils import CAT_MOD as CAT_V2_MOD
+from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
+    SINGLETON_MOD,
+    SINGLETON_MOD_HASH,
+    SINGLETON_LAUNCHER,
+    SINGLETON_LAUNCHER_HASH,
+)
+from chia.wallet.trading.offer import OFFER_MOD
+
+from chia_rs.sized_bytes import bytes32
+
+from circuit_puzzles import load_puzzle
+
+
+def load_clvm(puzzle_name: str) -> Program:
+    """Load a CLVM puzzle by name."""
+    return Program.from_bytes(bytes(load_puzzle(puzzle_name)))
+
+
+def load_cat_mod() -> Program:
+    """Load CAT module (can be monkeypatched for tests)."""
+    return CAT_V2_MOD
+
+
+def load_and_curry(puzzle_name: str, *curry_params) -> Program:
+    """Load a puzzle and curry it with parameters."""
+    program = load_clvm(puzzle_name)
+    if curry_params:
+        return program.curry(*curry_params)
+    return program
+
+
+# Zero faucet puzzle - hardcoded to avoid dependency on puzzles repo
+# This puzzle allows creating zero-amount BYC coins for savings withdrawal vacuuming
+#
+# Chialisp source (circuit_puzzles/zero_faucet.clsp):
+# ----------------------------------------------------------------
+# (mod (MOD_HASH conditions)
+#
+#   (include *standard-cl-23.1*)
+#   (include curry.clib)
+#   (include utils.clib)
+#   (include condition_codes.clib)
+#
+#   (li
+#     ; recreate zero faucet coin
+#     (list CREATE_COIN
+#       (curry_hashes MOD_HASH (sha256 ONE MOD_HASH))
+#       0
+#     )
+#     &rest
+#     conditions
+#   )
+# )
+# ----------------------------------------------------------------
+ZERO_FAUCET_HEX = "ff02ffff01ff04ffff04ff1effff04ffff02ff12ffff04ff02ffff04ff05ffff04ffff0bff1aff0580ff8080808080ffff04ff80ff80808080ff0b80ffff04ffff01ffffff02ffffa04bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459aa09dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2ffa102a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222a102a8d5dd63fba471ebcb1f3e8f7c1e1879b7152a6e7298a91ce119a63400ade7c5ffff0bff10ffff0bff10ff68ff0580ffff0bff10ff0bff488080ff02ffff03ff05ffff01ff0bff78ffff02ff14ffff04ff02ffff04ff09ffff04ffff02ff1cffff04ff02ffff04ff0dff80808080ff808080808080ffff016880ff0180ffffff0bff58ffff02ff14ffff04ff02ffff04ff05ffff04ffff02ff1cffff04ff02ffff04ff07ff80808080ff80808080808001ff0233ff018080"
+ZERO_FAUCET = Program.from_bytes(bytes.fromhex(ZERO_FAUCET_HEX))
+ZERO_FAUCET_MOD_HASH = ZERO_FAUCET.get_tree_hash()
+
+# Module constants - all loaded at module level
+STATUTES_LAUNCHER = load_clvm("statutes_launcher")
+STATUTES_LAUNCHER_HASH = STATUTES_LAUNCHER.get_tree_hash()
+
+### SINGLETON ISA ###
+SINGLETON_ISA_MOD = load_clvm("singleton_top_layer_isa")
+SINGLETON_ISA_MOD_HASH = SINGLETON_ISA_MOD.get_tree_hash()
+
+### CAT ###
+CAT_MOD = load_cat_mod()
+CAT_MOD_HASH = CAT_MOD.get_tree_hash()
+
+# CAT layer inner puzzle that forces tail to run
+RUN_TAIL_MOD = load_clvm("run_tail")
+RUN_TAIL_MOD_HASH = RUN_TAIL_MOD.get_tree_hash()
+
+### Settlement Payments ###
+OFFER_MOD_HASH = OFFER_MOD.get_tree_hash()
+
+### BYC Tail ###
+BYC_TAIL_MOD_RAW = load_clvm("byc_tail")
+BYC_TAIL_MOD = BYC_TAIL_MOD_RAW.curry(RUN_TAIL_MOD_HASH)
+BYC_TAIL_MOD_HASH = BYC_TAIL_MOD.get_tree_hash()
+
+### CRT Tail ###
+CRT_TAIL_MOD_RAW = load_clvm("crt_tail")
+CRT_TAIL_MOD = CRT_TAIL_MOD_RAW.curry(RUN_TAIL_MOD_HASH)
+CRT_TAIL_MOD_HASH = CRT_TAIL_MOD.get_tree_hash()
+
+### Statutes ###
+STATUTES_MOD_RAW = load_clvm("statutes")
+PROGRAM_STATUTES_MUTATION_MOD_RAW = load_clvm("programs/statutes_mutation")
+PROGRAM_STATUTES_UPDATE_PRICE_MOD_RAW = load_clvm("programs/statutes_update_price")
+PROGRAM_STATUTES_UPDATE_PRICE_MOD = PROGRAM_STATUTES_UPDATE_PRICE_MOD_RAW.curry(
+    (SINGLETON_MOD_HASH, SINGLETON_LAUNCHER_HASH)
+)
+PROGRAM_STATUTES_UPDATE_PRICE_MOD_HASH = PROGRAM_STATUTES_UPDATE_PRICE_MOD.get_tree_hash()
+
+### Governance ###
+EXIT_GOVERNANCE_MOD = load_clvm("governance_exit")
+EXIT_GOVERNANCE_MOD_HASH = EXIT_GOVERNANCE_MOD.get_tree_hash()
+LAUNCH_GOVERNANCE_MOD = load_clvm("governance_launcher")
+LAUNCH_GOVERNANCE_MOD_HASH = LAUNCH_GOVERNANCE_MOD.get_tree_hash()
+GOVERNANCE_MOD_RAW = load_clvm("governance")
+PROGRAM_GOVERNANCE_RESET_BILL_MOD = load_clvm("programs/governance_reset_bill")
+PROGRAM_GOVERNANCE_PROPOSE_BILL_MOD = load_clvm("programs/governance_propose_bill")
+PROGRAM_GOVERNANCE_VETO_ANNOUNCEMENT_MOD = load_clvm("programs/governance_veto_announcement")
+PROGRAM_GOVERNANCE_VETO_BILL_MOD = load_clvm("programs/governance_veto_bill")
+PROGRAM_GOVERNANCE_IMPLEMENT_BILL_MOD = load_clvm("programs/governance_implement_bill")
+GOVERNANCE_OPERATIONS = [
+    PROGRAM_GOVERNANCE_VETO_BILL_MOD.get_tree_hash(),
+    PROGRAM_GOVERNANCE_RESET_BILL_MOD.get_tree_hash(),
+    PROGRAM_GOVERNANCE_PROPOSE_BILL_MOD.get_tree_hash(),
+    PROGRAM_GOVERNANCE_IMPLEMENT_BILL_MOD.get_tree_hash(),
+    PROGRAM_GOVERNANCE_VETO_ANNOUNCEMENT_MOD.get_tree_hash(),
+]
+GOVERNANCE_MOD = GOVERNANCE_MOD_RAW.curry(
+    CAT_MOD_HASH, LAUNCH_GOVERNANCE_MOD_HASH, EXIT_GOVERNANCE_MOD_HASH, GOVERNANCE_OPERATIONS
+)
+GOVERNANCE_MOD_HASH = GOVERNANCE_MOD.get_tree_hash()
+
+### Treasury ###
+TREASURY_MOD_RAW = load_clvm("treasury")
+TREASURY_MOD = TREASURY_MOD_RAW.curry(CAT_MOD_HASH, BYC_TAIL_MOD_HASH, CRT_TAIL_MOD_HASH)
+TREASURY_MOD_HASH = TREASURY_MOD.get_tree_hash()
+
+### Collateral Vault ###
+COLLATERAL_VAULT_MOD_RAW = load_clvm("collateral_vault")
+PROGRAM_VAULT_DEPOSIT_MOD = load_clvm("programs/vault_deposit")
+PROGRAM_VAULT_DEPOSIT_MOD_HASH = PROGRAM_VAULT_DEPOSIT_MOD.get_tree_hash()
+PROGRAM_VAULT_WITHDRAW_MOD = load_clvm("programs/vault_withdraw")
+PROGRAM_VAULT_WITHDRAW_MOD_HASH = PROGRAM_VAULT_WITHDRAW_MOD.get_tree_hash()
+PROGRAM_VAULT_BORROW_MOD_RAW = load_clvm("programs/vault_borrow")
+PROGRAM_VAULT_REPAY_MOD_RAW = load_clvm("programs/vault_repay")
+PROGRAM_VAULT_TRANSFER_MOD = load_clvm("programs/vault_transfer")
+PROGRAM_VAULT_TRANSFER_MOD_HASH = PROGRAM_VAULT_TRANSFER_MOD.get_tree_hash()
+PROGRAM_VAULT_KEEPER_START_AUCTION_MOD = load_clvm("programs/vault_keeper_start_auction")
+PROGRAM_VAULT_KEEPER_START_AUCTION_MOD_HASH = PROGRAM_VAULT_KEEPER_START_AUCTION_MOD.get_tree_hash()
+PROGRAM_VAULT_KEEPER_BID_MOD_RAW = load_clvm("programs/vault_keeper_bid")
+PROGRAM_VAULT_KEEPER_RECOVER_BAD_DEBT_MOD_RAW = load_clvm("programs/vault_keeper_recover_bad_debt")
+PROGRAM_VAULT_KEEPER_TRANSFER_SF_TO_TREASURY_MOD_RAW = load_clvm("programs/vault_keeper_transfer_sf_to_treasury")
+PROGRAM_VAULT_BORROW_MOD = PROGRAM_VAULT_BORROW_MOD_RAW.curry(CAT_MOD_HASH, BYC_TAIL_MOD_HASH, RUN_TAIL_MOD_HASH)
+PROGRAM_VAULT_BORROW_MOD_HASH = PROGRAM_VAULT_BORROW_MOD.get_tree_hash()
+PROGRAM_VAULT_REPAY_MOD = PROGRAM_VAULT_REPAY_MOD_RAW.curry(
+    CAT_MOD_HASH, BYC_TAIL_MOD_HASH, RUN_TAIL_MOD_HASH, TREASURY_MOD_HASH
+)
+PROGRAM_VAULT_REPAY_MOD_HASH = PROGRAM_VAULT_REPAY_MOD.get_tree_hash()
+PROGRAM_VAULT_KEEPER_BID_MOD = PROGRAM_VAULT_KEEPER_BID_MOD_RAW.curry(
+    CAT_MOD_HASH, BYC_TAIL_MOD_HASH, RUN_TAIL_MOD_HASH, TREASURY_MOD_HASH, OFFER_MOD_HASH
+)
+PROGRAM_VAULT_KEEPER_BID_MOD_HASH = PROGRAM_VAULT_KEEPER_BID_MOD.get_tree_hash()
+PROGRAM_VAULT_KEEPER_RECOVER_BAD_DEBT_MOD = PROGRAM_VAULT_KEEPER_RECOVER_BAD_DEBT_MOD_RAW.curry(
+    CAT_MOD_HASH,
+    BYC_TAIL_MOD_HASH,
+    TREASURY_MOD_HASH,
+    RUN_TAIL_MOD_HASH,
+)
+PROGRAM_VAULT_KEEPER_RECOVER_BAD_DEBT_MOD_HASH = PROGRAM_VAULT_KEEPER_RECOVER_BAD_DEBT_MOD.get_tree_hash()
+PROGRAM_VAULT_KEEPER_TRANSFER_SF_TO_TREASURY_MOD = PROGRAM_VAULT_KEEPER_TRANSFER_SF_TO_TREASURY_MOD_RAW.curry(
+    CAT_MOD_HASH, BYC_TAIL_MOD_HASH, RUN_TAIL_MOD_HASH, TREASURY_MOD_HASH
+)
+PROGRAM_VAULT_KEEPER_TRANSFER_SF_TO_TREASURY_MOD_HASH = PROGRAM_VAULT_KEEPER_TRANSFER_SF_TO_TREASURY_MOD.get_tree_hash()
+COLLATERAL_VAULT_MOD = COLLATERAL_VAULT_MOD_RAW.curry(
+    (
+        [
+            PROGRAM_VAULT_DEPOSIT_MOD_HASH,
+            PROGRAM_VAULT_WITHDRAW_MOD_HASH,
+            PROGRAM_VAULT_BORROW_MOD_HASH,
+            PROGRAM_VAULT_REPAY_MOD_HASH,
+            PROGRAM_VAULT_TRANSFER_MOD_HASH,
+        ],
+        [
+            PROGRAM_VAULT_KEEPER_START_AUCTION_MOD_HASH,
+            PROGRAM_VAULT_KEEPER_BID_MOD_HASH,
+            PROGRAM_VAULT_KEEPER_RECOVER_BAD_DEBT_MOD_HASH,
+            PROGRAM_VAULT_KEEPER_TRANSFER_SF_TO_TREASURY_MOD_HASH,
+        ],
+    )
+)
+COLLATERAL_VAULT_MOD_HASH = COLLATERAL_VAULT_MOD.get_tree_hash()
+
+### Savings Vault ###
+SAVINGS_VAULT_MOD_RAW = load_clvm("savings_vault")
+SAVINGS_VAULT_MOD = SAVINGS_VAULT_MOD_RAW.curry(CAT_MOD_HASH, BYC_TAIL_MOD_HASH, TREASURY_MOD_HASH)
+SAVINGS_VAULT_MOD_HASH = SAVINGS_VAULT_MOD.get_tree_hash()
+
+### Recharge Auction ###
+RECHARGE_AUCTION_MOD_RAW = load_clvm("recharge_auction")
+PROGRAM_RECHARGE_LAUNCH_MOD = load_clvm("programs/recharge_launch")
+PROGRAM_RECHARGE_START_AUCTION_MOD_RAW = load_clvm("programs/recharge_start_auction")
+PROGRAM_RECHARGE_BID_MOD_RAW = load_clvm("programs/recharge_bid")
+PROGRAM_RECHARGE_SETTLE_MOD_RAW = load_clvm("programs/recharge_settle")
+PROGRAM_RECHARGE_START_AUCTION_MOD = PROGRAM_RECHARGE_START_AUCTION_MOD_RAW.curry(CAT_MOD_HASH, TREASURY_MOD_HASH)
+PROGRAM_RECHARGE_BID_MOD = PROGRAM_RECHARGE_BID_MOD_RAW.curry(CAT_MOD_HASH, OFFER_MOD_HASH)
+PROGRAM_RECHARGE_SETTLE_MOD = PROGRAM_RECHARGE_SETTLE_MOD_RAW.curry(
+    CAT_MOD_HASH, RUN_TAIL_MOD_HASH, CRT_TAIL_MOD_HASH, TREASURY_MOD_HASH
+)
+RECHARGE_AUCTION_OPERATIONS = [
+    PROGRAM_RECHARGE_LAUNCH_MOD.get_tree_hash(),
+    PROGRAM_RECHARGE_START_AUCTION_MOD.get_tree_hash(),
+    PROGRAM_RECHARGE_BID_MOD.get_tree_hash(),
+    PROGRAM_RECHARGE_SETTLE_MOD.get_tree_hash(),
+]
+RECHARGE_AUCTION_MOD = RECHARGE_AUCTION_MOD_RAW.curry(RECHARGE_AUCTION_OPERATIONS, BYC_TAIL_MOD_HASH)
+RECHARGE_AUCTION_MOD_HASH = RECHARGE_AUCTION_MOD.get_tree_hash()
+
+### Surplus Auction ###
+PAYOUT_MOD_RAW = load_clvm("payout")
+PAYOUT_MOD = PAYOUT_MOD_RAW.curry(CAT_MOD_HASH)
+PAYOUT_MOD_HASH = PAYOUT_MOD.get_tree_hash()
+SURPLUS_AUCTION_MOD_RAW = load_clvm("surplus_auction")
+PROGRAM_SURPLUS_START_AUCTION_MOD_RAW = load_clvm("programs/surplus_start_auction")
+PROGRAM_SURPLUS_BID_MOD_RAW = load_clvm("programs/surplus_bid")
+PROGRAM_SURPLUS_SETTLE_MOD_RAW = load_clvm("programs/surplus_settle")
+PROGRAM_SURPLUS_START_AUCTION_MOD = PROGRAM_SURPLUS_START_AUCTION_MOD_RAW.curry(PAYOUT_MOD_HASH, TREASURY_MOD_HASH)
+PROGRAM_SURPLUS_BID_MOD = PROGRAM_SURPLUS_BID_MOD_RAW.curry(OFFER_MOD_HASH)
+PROGRAM_SURPLUS_SETTLE_MOD = PROGRAM_SURPLUS_SETTLE_MOD_RAW.curry(PAYOUT_MOD_HASH, RUN_TAIL_MOD_HASH)
+SURPLUS_AUCTION_OPERATIONS = [
+    PROGRAM_SURPLUS_SETTLE_MOD.get_tree_hash(),
+    PROGRAM_SURPLUS_START_AUCTION_MOD.get_tree_hash(),
+    PROGRAM_SURPLUS_BID_MOD.get_tree_hash(),
+]
+SURPLUS_AUCTION_MOD = SURPLUS_AUCTION_MOD_RAW.curry(
+    SURPLUS_AUCTION_OPERATIONS, CAT_MOD_HASH, BYC_TAIL_MOD_HASH, CRT_TAIL_MOD_HASH
+)
+SURPLUS_AUCTION_MOD_HASH = SURPLUS_AUCTION_MOD.get_tree_hash()
+
+### Announcer ###
+ATOM_ANNOUNCER_MOD_RAW = load_clvm("atom_announcer")
+PROGRAM_ANNOUNCER_REGISTER_MOD = load_clvm("programs/announcer_register")
+PROGRAM_ANNOUNCER_PENALIZE_MOD = load_clvm("programs/announcer_penalize")
+PROGRAM_ANNOUNCER_ANNOUNCE_MOD = load_clvm("programs/announcer_announce")
+PROGRAM_ANNOUNCER_MUTATE_MOD = load_clvm("programs/announcer_mutate")
+PROGRAM_ANNOUNCER_GOVERN_MOD = load_clvm("programs/announcer_govern")
+PROGRAM_ANNOUNCER_CONFIGURE_MOD = load_clvm("programs/announcer_configure")
+ATOM_ANNOUNCER_OPERATIONS = [
+    PROGRAM_ANNOUNCER_ANNOUNCE_MOD.get_tree_hash(),
+    PROGRAM_ANNOUNCER_PENALIZE_MOD.get_tree_hash(),
+    PROGRAM_ANNOUNCER_REGISTER_MOD.get_tree_hash(),
+    PROGRAM_ANNOUNCER_MUTATE_MOD.get_tree_hash(),
+    PROGRAM_ANNOUNCER_GOVERN_MOD.get_tree_hash(),
+    PROGRAM_ANNOUNCER_CONFIGURE_MOD.get_tree_hash(),
+]
+ATOM_ANNOUNCER_MOD = ATOM_ANNOUNCER_MOD_RAW.curry(ATOM_ANNOUNCER_OPERATIONS)
+ATOM_ANNOUNCER_MOD_HASH = ATOM_ANNOUNCER_MOD.get_tree_hash()
+
+### Registry ###
+ANNOUNCER_REGISTRY_MOD_RAW = load_clvm("announcer_registry")
+
+### Oracle ###
+ORACLE_MOD_RAW = load_clvm("oracle")
+
+## Standard oracle ##
+PROGRAM_STANDARD_ORACLE_PRICE_MUTATION_MOD_RAW = load_clvm("programs/oracle_mutation")
+PROGRAM_STANDARD_ORACLE_PRICE_MUTATION_MOD = PROGRAM_STANDARD_ORACLE_PRICE_MUTATION_MOD_RAW.curry(
+    ATOM_ANNOUNCER_MOD_HASH
+)
+PROGRAM_STANDARD_ORACLE_PRICE_MUTATION_MOD_HASH = PROGRAM_STANDARD_ORACLE_PRICE_MUTATION_MOD.get_tree_hash()
+STANDARD_ORACLE_MOD = ORACLE_MOD_RAW.curry(PROGRAM_STANDARD_ORACLE_PRICE_MUTATION_MOD_HASH)
+STANDARD_ORACLE_MOD_HASH = STANDARD_ORACLE_MOD.get_tree_hash()
+
+
+def load_oracle_mods(
+    mutation_program: str = "programs/oracle_mutation",
+    fixed_args: list[Program | bytes | int] = None,
+) -> tuple[Program, bytes32, Program, bytes32]:
+    """
+    Load a custom oracle mutation program (.clsp) and curry it into the main oracle puzzle.
+
+    Args:
+        mutation_program: Path to the mutation program (without .clsp extension)
+        fixed_args: Optional list of additional arguments to curry into the mutation program
+
+    Returns:
+        tuple: (curried_oracle_mod, curried_oracle_mod_hash, custom_mutation_mod, custom_mutation_mod_hash)
+    """
+    if fixed_args is None:
+        fixed_args = []
+
+    custom_mutation_mod_raw = load_clvm(mutation_program)
+
+    curry_args = [ATOM_ANNOUNCER_MOD_HASH]
+    if mutation_program == "programs/backup_oracle_mutation":
+        curry_args.extend(fixed_args)
+
+    custom_mutation_mod = custom_mutation_mod_raw.curry(*curry_args)
+    custom_mutation_mod_hash = custom_mutation_mod.get_tree_hash()
+
+    custom_oracle_mod = ORACLE_MOD_RAW.curry(custom_mutation_mod_hash)
+    custom_oracle_mod_hash = custom_oracle_mod.get_tree_hash()
+
+    return custom_oracle_mod, custom_oracle_mod_hash, custom_mutation_mod, custom_mutation_mod_hash
+
+
+PROGRAM_BACKUP_ORACLE_PRICE_MUTATION_MOD_RAW = load_clvm("programs/backup_oracle_mutation")
+(
+    ORACLE_MOD,
+    ORACLE_MOD_HASH,
+    PROGRAM_ORACLE_PRICE_MUTATION_MOD,
+    PROGRAM_ORACLE_PRICE_MUTATION_MOD_HASH,
+) = load_oracle_mods()
+
+
+_name_to_mod = {
+    "CAT_MOD": CAT_MOD,
+    "CAT_MOD_HASH": CAT_MOD_HASH,
+    "RUN_TAIL_MOD": RUN_TAIL_MOD,
+    "RUN_TAIL_MOD_HASH": RUN_TAIL_MOD_HASH,
+    "OFFER_MOD": OFFER_MOD,
+    "OFFER_MOD_HASH": OFFER_MOD_HASH,
+    "SINGLETON_MOD": SINGLETON_MOD,
+    "SINGLETON_MOD_HASH": SINGLETON_MOD_HASH,
+    "SINGLETON_ISA_MOD": SINGLETON_ISA_MOD,
+    "SINGLETON_ISA_MOD_HASH": SINGLETON_ISA_MOD_HASH,
+    "SINGLETON_LAUNCHER": SINGLETON_LAUNCHER,
+    "SINGLETON_LAUNCHER_HASH": SINGLETON_LAUNCHER_HASH,
+    "BYC_TAIL_MOD": BYC_TAIL_MOD,
+    "BYC_TAIL_MOD_HASH": BYC_TAIL_MOD_HASH,
+    "CRT_TAIL_MOD": CRT_TAIL_MOD,
+    "CRT_TAIL_MOD_HASH": CRT_TAIL_MOD_HASH,
+    "ZERO_FAUCET": ZERO_FAUCET,
+    "ZERO_FAUCET_MOD_HASH": ZERO_FAUCET_MOD_HASH,
+    "STATUTES_MOD_RAW": STATUTES_MOD_RAW,
+    "PROGRAM_STATUTES_MUTATION_MOD_RAW": PROGRAM_STATUTES_MUTATION_MOD_RAW,
+    "PROGRAM_STATUTES_UPDATE_PRICE_MOD": PROGRAM_STATUTES_UPDATE_PRICE_MOD,
+    "PROGRAM_STATUTES_UPDATE_PRICE_MOD_HASH": PROGRAM_STATUTES_UPDATE_PRICE_MOD_HASH,
+    "EXIT_GOVERNANCE_MOD": EXIT_GOVERNANCE_MOD,
+    "EXIT_GOVERNANCE_MOD_HASH": EXIT_GOVERNANCE_MOD_HASH,
+    "LAUNCH_GOVERNANCE_MOD": LAUNCH_GOVERNANCE_MOD,
+    "LAUNCH_GOVERNANCE_MOD_HASH": LAUNCH_GOVERNANCE_MOD_HASH,
+    "GOVERNANCE_MOD": GOVERNANCE_MOD,
+    "GOVERNANCE_MOD_HASH": GOVERNANCE_MOD_HASH,
+    "PROGRAM_GOVERNANCE_RESET_BILL_MOD": PROGRAM_GOVERNANCE_RESET_BILL_MOD,
+    "PROGRAM_GOVERNANCE_PROPOSE_BILL_MOD": PROGRAM_GOVERNANCE_PROPOSE_BILL_MOD,
+    "PROGRAM_GOVERNANCE_VETO_ANNOUNCEMENT_MOD": PROGRAM_GOVERNANCE_VETO_ANNOUNCEMENT_MOD,
+    "PROGRAM_GOVERNANCE_VETO_BILL_MOD": PROGRAM_GOVERNANCE_VETO_BILL_MOD,
+    "PROGRAM_GOVERNANCE_IMPLEMENT_BILL_MOD": PROGRAM_GOVERNANCE_IMPLEMENT_BILL_MOD,
+    "TREASURY_MOD": TREASURY_MOD,
+    "TREASURY_MOD_HASH": TREASURY_MOD_HASH,
+    "COLLATERAL_VAULT_MOD": COLLATERAL_VAULT_MOD,
+    "COLLATERAL_VAULT_MOD_HASH": COLLATERAL_VAULT_MOD_HASH,
+    "PROGRAM_VAULT_DEPOSIT_MOD": PROGRAM_VAULT_DEPOSIT_MOD,
+    "PROGRAM_VAULT_WITHDRAW_MOD": PROGRAM_VAULT_WITHDRAW_MOD,
+    "PROGRAM_VAULT_BORROW_MOD": PROGRAM_VAULT_BORROW_MOD,
+    "PROGRAM_VAULT_REPAY_MOD": PROGRAM_VAULT_REPAY_MOD,
+    "PROGRAM_VAULT_TRANSFER_MOD": PROGRAM_VAULT_TRANSFER_MOD,
+    "PROGRAM_VAULT_KEEPER_START_AUCTION_MOD": PROGRAM_VAULT_KEEPER_START_AUCTION_MOD,
+    "PROGRAM_VAULT_KEEPER_BID_MOD": PROGRAM_VAULT_KEEPER_BID_MOD,
+    "PROGRAM_VAULT_KEEPER_RECOVER_BAD_DEBT_MOD": PROGRAM_VAULT_KEEPER_RECOVER_BAD_DEBT_MOD,
+    "PROGRAM_VAULT_KEEPER_TRANSFER_SF_TO_TREASURY_MOD": PROGRAM_VAULT_KEEPER_TRANSFER_SF_TO_TREASURY_MOD,
+    "SAVINGS_VAULT_MOD": SAVINGS_VAULT_MOD,
+    "SAVINGS_VAULT_MOD_HASH": SAVINGS_VAULT_MOD_HASH,
+    "RECHARGE_AUCTION_MOD": RECHARGE_AUCTION_MOD,
+    "RECHARGE_AUCTION_MOD_HASH": RECHARGE_AUCTION_MOD_HASH,
+    "PROGRAM_RECHARGE_LAUNCH_MOD": PROGRAM_RECHARGE_LAUNCH_MOD,
+    "PROGRAM_RECHARGE_START_AUCTION_MOD": PROGRAM_RECHARGE_START_AUCTION_MOD,
+    "PROGRAM_RECHARGE_BID_MOD": PROGRAM_RECHARGE_BID_MOD,
+    "PROGRAM_RECHARGE_SETTLE_MOD": PROGRAM_RECHARGE_SETTLE_MOD,
+    "PAYOUT_MOD": PAYOUT_MOD,
+    "PAYOUT_MOD_HASH": PAYOUT_MOD_HASH,
+    "SURPLUS_AUCTION_MOD": SURPLUS_AUCTION_MOD,
+    "SURPLUS_AUCTION_MOD_HASH": SURPLUS_AUCTION_MOD_HASH,
+    "PROGRAM_SURPLUS_START_AUCTION_MOD": PROGRAM_SURPLUS_START_AUCTION_MOD,
+    "PROGRAM_SURPLUS_BID_MOD": PROGRAM_SURPLUS_BID_MOD,
+    "PROGRAM_SURPLUS_SETTLE_MOD": PROGRAM_SURPLUS_SETTLE_MOD,
+    "ATOM_ANNOUNCER_MOD": ATOM_ANNOUNCER_MOD,
+    "ATOM_ANNOUNCER_MOD_HASH": ATOM_ANNOUNCER_MOD_HASH,
+    "PROGRAM_ANNOUNCER_REGISTER_MOD": PROGRAM_ANNOUNCER_REGISTER_MOD,
+    "PROGRAM_ANNOUNCER_PENALIZE_MOD": PROGRAM_ANNOUNCER_PENALIZE_MOD,
+    "PROGRAM_ANNOUNCER_ANNOUNCE_MOD": PROGRAM_ANNOUNCER_ANNOUNCE_MOD,
+    "PROGRAM_ANNOUNCER_MUTATE_MOD": PROGRAM_ANNOUNCER_MUTATE_MOD,
+    "PROGRAM_ANNOUNCER_GOVERN_MOD": PROGRAM_ANNOUNCER_GOVERN_MOD,
+    "PROGRAM_ANNOUNCER_CONFIGURE_MOD": PROGRAM_ANNOUNCER_CONFIGURE_MOD,
+    "ANNOUNCER_REGISTRY_MOD_RAW": ANNOUNCER_REGISTRY_MOD_RAW,
+    "ORACLE_MOD": ORACLE_MOD,
+    "ORACLE_MOD_HASH": ORACLE_MOD_HASH,
+    "PROGRAM_ORACLE_PRICE_MUTATION_MOD": PROGRAM_ORACLE_PRICE_MUTATION_MOD,
+    "PROGRAM_ORACLE_PRICE_MUTATION_MOD_HASH": PROGRAM_ORACLE_PRICE_MUTATION_MOD_HASH,
+}
+# reverse so we can look up by mod hash
+_mod_hash_to_name = {v.get_tree_hash() if isinstance(v, Program) else v: k for k, v in _name_to_mod.items()}
+
+
+def operation_name(operation_program: Optional[Program]) -> Optional[str]:
+    """Returns operation name for given operation program"""
+    if operation_program is None:
+        return None
+    return _mod_hash_to_name.get(operation_program.get_tree_hash())
