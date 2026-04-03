@@ -87,10 +87,10 @@ export default {
   },
   breakdownMethodology: {
     Fees: {
-      [LABELS.ProtocolFees]: "Stability fees charged on BYC loans, annualised at current rate",
+      [LABELS.ProtocolFees]: "Stability fee accrual on outstanding debt, annualised at current rate",
     },
     Revenue: {
-      [LABELS.ProtocolFeesToTreasury]: "Stability fees retained by treasury after savings interest payouts",
+      [LABELS.ProtocolFeesToTreasury]: "Stability fee accrual minus savings interest accrual, annualized at their respective current rates",
     },
     ProtocolRevenue: {
       [LABELS.ProtocolFeesToTreasury]: "All protocol revenue accrues to the treasury",
