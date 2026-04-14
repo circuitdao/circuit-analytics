@@ -662,9 +662,9 @@ def get_cat_solution_info(
                 tail_solution,
             ]
         )
-        if tail_program_hash == BYC_TAIL_HASH:
+        if tail_program_hash == byc_tail_hash:
             limitations_solution_info = get_byc_tail_solution_info(limitations_solution)
-        elif tail_program_hash == CRT_TAIL_HASH:
+        elif tail_program_hash == crt_tail_hash:
             limitations_solution_info = get_crt_tail_solution_info(limitations_solution)
         else:  # Unknown CAT
             limitations_solution_info = limitations_solution
