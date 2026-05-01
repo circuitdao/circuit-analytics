@@ -18,6 +18,7 @@ from circuit_analytics.errors import SpendError
 from circuit_analytics.mods import (
     PROGRAM_STATUTES_MUTATION_MOD_RAW,
     CAT_MOD_HASH,
+    CRT_TAIL_MOD,
     GOVERNANCE_MOD_HASH,
     PROGRAM_STATUTES_UPDATE_PRICE_MOD_HASH,
     TREASURY_MOD_HASH,
@@ -412,7 +413,9 @@ class StatutesSolutionInfo:
             _,
             mutation_index,
             _,
-        ) = to_list(self.mutation, [None, "int", None])  # TODO: check canonical representation of mutation_index (puzzle rejects non-canonical encodings)
+        ) = to_list(
+            self.mutation, [None, "int", None]
+        )  # TODO: check canonical representation of mutation_index (puzzle rejects non-canonical encodings)
         return mutation_index
 
     @property
@@ -584,11 +587,10 @@ def get_statutes_solution_info(coin_spend: CoinSpend) -> StatutesSolutionInfo:
     # non-announce operations
     if not statutes_info.prev_announce:
         raise SpendError("Statutes non-announce operation failed because previous operation was not an announce")
-    from circuit_analytics.config import CRT_TAIL_HASH
-
+    crt_tail_hash = CRT_TAIL_MOD.curry(statutes_info.statutes_struct).get_tree_hash()
     PROGRAM_STATUTES_MUTATION_MOD_HASH = PROGRAM_STATUTES_MUTATION_MOD_RAW.curry(
         CAT_MOD_HASH,
-        CRT_TAIL_HASH,
+        crt_tail_hash,
         GOVERNANCE_MOD_HASH,
     ).get_tree_hash()
     if solution_info.operation_hash == PROGRAM_STATUTES_MUTATION_MOD_HASH:

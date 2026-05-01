@@ -503,15 +503,8 @@ def morph_condition(condition: Program, mod_hash: bytes32, tail_program_hash: by
 
 
 def get_cat_solution_info(
-    coin_spend: CoinSpend, byc_tail_hash: bytes32 = None, crt_tail_hash: bytes32 = None
+    coin_spend: CoinSpend, byc_tail_hash: bytes32, crt_tail_hash: bytes32
 ) -> CatSolutionInfo:
-    if byc_tail_hash is None or crt_tail_hash is None:
-        from circuit_analytics.config import BYC_TAIL_HASH, CRT_TAIL_HASH
-
-        if byc_tail_hash is None:
-            byc_tail_hash = BYC_TAIL_HASH
-        if crt_tail_hash is None:
-            crt_tail_hash = CRT_TAIL_HASH
 
     mod, curried_args = uncurry(coin_spend.puzzle_reveal)
     (

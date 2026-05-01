@@ -69,7 +69,7 @@ class CatHandler(SpendHandler):
 
         elif tail_hash == crt_tail_hash:
             # Check CRT spends for a TAIL reveal — CrtTailLaunchInfo means CRT was issued.
-            cat_spend_info = get_cat_spend_info(coin_spend, crt_tail_hash=bytes32(crt_tail_hash))
+            cat_spend_info = get_cat_spend_info(coin_spend, byc_tail_hash=bytes32(byc_tail_hash), crt_tail_hash=bytes32(crt_tail_hash))
             if isinstance(cat_spend_info, CatTailRevealInfo) and isinstance(
                 cat_spend_info.limitations_solution_info, CrtTailLaunchInfo
             ):
