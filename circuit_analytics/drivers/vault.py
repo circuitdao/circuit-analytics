@@ -1068,7 +1068,9 @@ class CollateralVaultState:
             return None
         return self.initiator_incentive_balance + self.byc_to_treasury_balance + self.byc_to_melt_balance
 
-    def min_byc_amount_to_bid(self, current_timestamp: int) -> int | None:
+    def min_byc_amount_to_bid(
+        self, current_timestamp: int, min_treasury_delta: int | None = None
+    ) -> int | None:
         if self.auction_state.nullp():
             return None
         required_byc_bid_amount = calculate_required_byc_bid_amount(
@@ -1079,11 +1081,26 @@ class CollateralVaultState:
             self.start_time,
             current_timestamp,
         )  # minimum bid amount required to receive all collateral
-        return min(
+        raw_min = min(
             self.minimum_bid_amount + 1,
             self.seized_debt,
             required_byc_bid_amount,
         )
+        if min_treasury_delta is None:
+            return raw_min
+        # When min_treasury_delta is known, ensure we never return a bid the puzzle would reject
+        # for leaving a dust treasury deposit. The dust band is B in (II, II + min(delta, fees-1)];
+        # this only truncates the bottom of the range when minimum_bid_amount >= II (otherwise the
+        # bids [mba+1, II] pay the incentive only and are valid -- that case is a genuine interior
+        # gap reported by forbidden_byc_amount_to_bid_range instead). Bids >= required_byc_bid_amount
+        # are exempt (leftover_collateral == 0), so the bump target is capped there.
+        fees = self.byc_to_treasury_balance
+        ii = self.initiator_incentive_balance
+        if fees > 0 and min_treasury_delta > 0:
+            band_hi = ii + min(min_treasury_delta, fees - 1)
+            if ii < raw_min <= band_hi and raw_min < required_byc_bid_amount:
+                return min(band_hi + 1, required_byc_bid_amount)
+        return raw_min
 
     def max_byc_amount_to_bid(self, current_timestamp: int) -> int | None:
         if self.auction_state.nullp():
@@ -1100,6 +1117,41 @@ class CollateralVaultState:
             self.seized_debt,
             required_byc_bid_amount,  # prevent overspending even though allowed by puzzle
         )
+
+    def forbidden_byc_amount_to_bid_range(
+        self, current_timestamp: int, min_treasury_delta: int
+    ) -> tuple[int, int] | None:
+        """Inclusive (lo, hi) mBYC bid amounts the puzzle forbids because they would leave a
+        dust deposit in the treasury (0 < byc_to_treasury <= min_treasury_delta).
+
+        A bid B is valid iff min_byc_amount_to_bid <= B <= max_byc_amount_to_bid and, when this
+        range is not None, NOT (lo <= B <= hi). Returns None when the valid set is a single
+        interval (the common case), so callers can treat [min, max] as contiguous.
+        """
+        if self.auction_state.nullp():
+            return None
+        fees = self.byc_to_treasury_balance
+        ii = self.initiator_incentive_balance
+        # A genuine interior gap exists only when the minimum bid lands strictly below the
+        # initiator incentive balance -- then the bids [mba+1, II] pay the incentive only (valid,
+        # treasury delta 0) and form a real low interval, separated by the dust band from the high
+        # interval. It also requires the auction to still owe treasury fees with a positive dust
+        # threshold. When minimum_bid_amount >= II the dust band instead truncates the bottom of
+        # the range and is folded into min_byc_amount_to_bid (which never sits inside this range).
+        if not (self.minimum_bid_amount < ii and fees > 0 and min_treasury_delta > 0):
+            return None
+        # Forbidden bids pay a dust treasury amount: B in (II, II + min(delta, fees - 1)].
+        # min(delta, fees - 1) picks whichever escape comes first -- exceeding the dust threshold
+        # or clearing the whole remaining treasury balance (byc_to_treasury == fees). hi is clipped
+        # to max_byc_amount_to_bid - 1 to honour the leftover_collateral == 0 escape at the top.
+        lo = ii + 1
+        hi = min(
+            ii + min(min_treasury_delta, fees - 1),
+            self.max_byc_amount_to_bid(current_timestamp) - 1,
+        )
+        if lo > hi:
+            return None
+        return (lo, hi)
 
     def print(self, text: str = "", indent: str = ""):
         text = f" ({text})" if text else ""
