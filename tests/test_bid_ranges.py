@@ -7,6 +7,8 @@ required_byc_bid_amount >> debt (max_byc_amount_to_bid == debt), which keeps the
 pure arithmetic -- the leftover_collateral == 0 escape never fires below the full debt.
 """
 
+import itertools
+
 import pytest
 from chia.types.blockchain_format.program import Program
 
@@ -196,3 +198,71 @@ def test_no_auction_returns_none():
         discounted_principal=0,
     )
     assert state.forbidden_byc_amount_to_bid_range(CURRENT_TIME, 40) is None
+
+
+def _bid_valid_on_chain(state, bid, ii, fees, melt, mba, delta):
+    """Full on-chain bid predicate at CURRENT_TIME, including the leftover_collateral == 0 escape.
+
+    Mirrors the min-bid and treasury `any` clauses of vault_keeper_bid.clsp, plus the
+    leftover_debt >= 0 bound. Used by the fuzz test to confirm min/max/gap endpoints are
+    genuinely (in)valid across the whole parameter space.
+    """
+    debt = ii + fees + melt
+    if not (1 <= bid <= debt):
+        return False
+    expected_collateral = calculate_expected_collateral(
+        bid, state.start_price, state.step_price_decrease_factor,
+        state.step_time_interval, state.start_time, CURRENT_TIME,
+    )
+    leftover_zero = expected_collateral >= state.collateral
+    byc_to_treasury = min(fees, max(0, bid - ii))
+    min_ok = (bid > mba) or (mba >= debt and bid == debt) or leftover_zero
+    treasury_ok = (
+        byc_to_treasury > delta or byc_to_treasury == fees or byc_to_treasury == 0 or leftover_zero
+    )
+    return min_ok and treasury_ok
+
+
+def test_bid_range_invariants_fuzz():
+    """Sweep the parameter space and assert the structural invariants everywhere:
+
+    - min_byc_amount_to_bid <= max_byc_amount_to_bid (never inverted / empty),
+    - both endpoints are genuine on-chain-valid bids,
+    - any forbidden gap sits strictly inside (min, max) and is bracketed by valid bids while its
+      own endpoints (and midpoint) are invalid.
+    """
+    grid = itertools.product(
+        [0, 20, 60, 500],                 # II  (initiator incentive balance)
+        [0, 1, 3, 1140],                  # T   (byc_to_treasury_balance / fees)
+        [0, 10_000, 1_000_000],           # M   (byc_to_melt_balance / principal)
+        [0, 5, 25, 200],                  # mba (minimum_bid_amount)
+        [0, 1, 40, 1000],                 # delta (min_treasury_delta)
+        [(1_000_000, 500_000), (16_000_000, 500_000), (1_000_000_000_000, 500_000)],  # collateral, start_price
+    )
+    checked = 0
+    for ii, fees, melt, mba, delta, (collateral, start_price) in grid:
+        if ii + fees + melt == 0:
+            continue  # zero-debt is not a real liquidation auction (no bid to place)
+        state = _make_state(ii, fees, melt, mba, collateral=collateral, start_price=start_price)
+        min_bid = state.min_byc_amount_to_bid(CURRENT_TIME, delta)
+        max_bid = state.max_byc_amount_to_bid(CURRENT_TIME)
+        forbidden = state.forbidden_byc_amount_to_bid_range(CURRENT_TIME, delta)
+        ctx = f"II={ii} T={fees} M={melt} mba={mba} delta={delta} collat={collateral} sp={start_price}"
+        checked += 1
+
+        assert min_bid is not None and max_bid is not None, ctx
+        # core invariant: the range is never inverted
+        assert min_bid <= max_bid, f"min>max: {ctx} -> min={min_bid} max={max_bid}"
+        # both endpoints are genuinely valid bids on-chain
+        assert _bid_valid_on_chain(state, min_bid, ii, fees, melt, mba, delta), f"min invalid: {ctx} min={min_bid}"
+        assert _bid_valid_on_chain(state, max_bid, ii, fees, melt, mba, delta), f"max invalid: {ctx} max={max_bid}"
+
+        if forbidden is not None:
+            lo, hi = forbidden
+            assert min_bid < lo <= hi < max_bid, f"gap not strictly inside: {ctx} -> min={min_bid} gap=({lo},{hi}) max={max_bid}"
+            for bad in (lo, (lo + hi) // 2, hi):
+                assert not _bid_valid_on_chain(state, bad, ii, fees, melt, mba, delta), f"forbidden bid is valid: {ctx} bid={bad}"
+            assert _bid_valid_on_chain(state, lo - 1, ii, fees, melt, mba, delta), f"lo-1 not valid: {ctx} lo={lo}"
+            assert _bid_valid_on_chain(state, hi + 1, ii, fees, melt, mba, delta), f"hi+1 not valid: {ctx} hi={hi}"
+
+    assert checked > 500  # sanity: the sweep actually executed
