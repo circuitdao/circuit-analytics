@@ -6,3 +6,17 @@ __pycache__/
 dist/
 build/
 .venv/
+
+# Machine-specific settings: node addresses, chia root, db paths. Never committed --
+# a remote node's chia root holds private keys.
+env.local.sh
+*.local.sh
+*.local
+.env
+.env.*
+
+# Scanner databases. Chain data, and large.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3

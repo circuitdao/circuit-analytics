@@ -10,6 +10,10 @@
 # Set the following separately as required by your setup (or add them here for your machine):
 #   export CHIA_ROOT=~/.chia/mainnet
 #   export CHIA_NODES=127.0.0.1:8555 (optional if ${CHIA_ROOT}/config/config.yaml already points to desired node)
+#
+# Which node you talk to is specific to your machine, so it does not belong in this file.
+# Put CHIA_ROOT / CHIA_NODES in env.local.sh instead: it is gitignored and sourced below.
+# For a remote node, CHIA_ROOT must hold that node's ssl material -- keep it out of the repo.
 
 if [ "$1" = "set" ]; then
   export DB_PATH="${2:-$HOME/.circuit/analytics.db}"
@@ -22,6 +26,11 @@ if [ "$1" = "set" ]; then
   # CLVM-encoded list of 5 approved mod hashes (vault, surplus auction, recharge auction,
   # savings vault, announcer registry)
   export CIRCUIT_APPROVED_MOD_HASHES=ffa0c092cc686dad5f31cd3c008d2daa3b1bae044bd50c1fd01ca0af96660dc8e391ffa06253104cf7de1bcbbd34cd10897794737db32fcf9d57bfa9bec13c741fb4c8d2ffa081e0cc376e53e97da0ee154992a3554aa679b8818c88dc54b1fb4c2463c0c786ffa02a3922ea385178c37687a958ab9b51d698888ba6bd8782e7b6c97a771b130aa3ffa0faa2ed871f9b4f5f679cf7d4d306d8b13c9ecceb46c7b1d4f9dd8d3e86c0fc7280
+
+  # Machine-specific settings (CHIA_ROOT, CHIA_NODES, DB_PATH...). Gitignored.
+  if [ -f "$(dirname "${BASH_SOURCE[0]:-./env.sh}")/env.local.sh" ]; then
+    . "$(dirname "${BASH_SOURCE[0]:-./env.sh}")/env.local.sh"
+  fi
 elif [ "$1" = "clear" ]; then
   unset DB_PATH
   unset BYC_TAIL_HASH

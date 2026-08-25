@@ -45,6 +45,88 @@ To rescan from genesis, delete the existing DB first:
 rm /path/to/analytics.db
 ```
 
+## Inspecting spends
+
+Route spends through the same drivers the scanner uses and print what they parsed. Source
+`env.sh` first — `circuit-scan` tells you which variables are missing if you forget.
+
+```bash
+circuit-scan parse bundle.json          # a spend bundle file
+circuit-scan parse "$(cat bundle.json)" # inline JSON
+circuit-scan parse <hex-encoded-bundle>
+circuit-scan parse <spent-coin-id>      # fetched from a node
+```
+
+### From a block
+
+```bash
+circuit-scan parse --height 6543210
+circuit-scan parse --header-hash <hash>
+circuit-scan parse --height 6543210 --all   # every spend in the block, not just ours
+```
+
+A Circuit transaction is several coins held together by conditions rather than by their
+puzzles — a liquidation bid spends the vault, a treasury coin, a BYC coin and a fee coin. So
+this starts from the coins the drivers recognise and follows announcements, messages,
+ephemeral coin creation and concurrency assertions outwards until the set stops growing. Each
+spend reports why it was included:
+
+```
+[4] unrecognised  dd44e4a29433446b12b4236418bff045c31922d3064bad2ed60da568aeb045b8
+     amount 1
+     no driver claimed this spend
+     included: asserts concurrent spend of [3]
+```
+
+That last line is the point: a spend of an ordinary XCH coin means nothing on its own, and
+everything once you can see it paid the fee for the vault spend above it.
+
+Options: `-v` includes puzzles, solutions and conditions; `--json` gives a machine-readable
+summary; `--no-color` disables colour. The exit code is non-zero if any spend fails to parse
+— that is what a driver whose expected solution shape has drifted from its puzzle looks like,
+and the same failure stalls the block scanner at that block.
+
+## Checking the puzzle set
+
+```bash
+circuit-scan verify-config
+```
+
+Every protocol puzzle hash is derived from the installed `circuit_puzzles`. If that build
+differs from what is deployed, no protocol coin is recognised by its puzzle and the tools
+degrade quietly rather than failing: protocol spends parse as plain CATs and a block full of
+activity looks almost empty. `verify-config` compares the local hashes against the deployed
+ones in `CIRCUIT_APPROVED_MOD_HASHES` and exits non-zero if they differ; `parse` prints the
+same warning before it runs.
+
+## Choosing a full node
+
+Bundle mode needs no node, unless you pass a coin ID. Block mode and `run` do. By default the
+node comes from the Chia config at `CHIA_ROOT`, i.e. a node on this machine. To use one
+elsewhere on the network:
+
+```bash
+circuit-scan parse --height 6543210 --node chia-node.example:8555
+circuit-scan parse --height 6543210 --node chia-node.example:8555 --node 127.0.0.1:8555  # with fallback
+```
+
+Repeat `--node` to give fallbacks: each is health-checked and the first that answers is used.
+`--chia-root PATH` overrides `CHIA_ROOT`.
+
+A **remote** node's RPC is mutually authenticated, so it also needs that node's TLS client
+certificate. Point `CHIA_ROOT` at a directory holding the remote node's `config/ssl`
+material — usually a copy of its `~/.chia/mainnet`. **Keep that directory outside this
+repository:** it contains private keys.
+
+Addresses and paths are specific to your machine, so they are not committed. Put them in
+`env.local.sh`, which is gitignored and sourced by `env.sh set`:
+
+```bash
+# env.local.sh
+export CHIA_ROOT=~/chia-roots/remote-node
+export CHIA_NODES=chia-node.example:8555,127.0.0.1:8555
+```
+
 ## Running the analytics server
 
 ```bash
