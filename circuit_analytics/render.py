@@ -8,7 +8,7 @@ converted, which is what makes the output usable when comparing a spend against 
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from typing import Any, Optional
 
 from chia.types.blockchain_format.program import Program
 
@@ -35,46 +35,199 @@ CRT_FIELDS = {"crt_bid_amount", "rewards_per_interval", "delta_amount", "extra_d
 XCH_FIELDS = {"collateral", "deposit", "prev_deposit", "min_deposit", "leftover_collateral"}
 
 
+def _scaled(value: int, divisor: int, decimals: int, *, strip: bool = False) -> str:
+    """Exact fixed-point text for value/divisor.
+
+    Integer arithmetic throughout: float division loses precision well before the amounts
+    this protocol reaches. A flashloan mints up to Chia's MAX_COIN_AMOUNT of 2**64-1, and
+    18446744073709551615 / 1000 as a float rounds to 18446744073709552.0, misreporting the
+    amount by hundreds of milli-units.
+    """
+    sign = "-" if value < 0 else ""
+    whole, frac = divmod(abs(value), divisor)
+    text = f"{sign}{whole:,}.{frac:0{decimals}d}"
+    if strip:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
 def _colour(enabled: bool, code: str, text: str) -> str:
     return f"{code}{text}{RESET}" if enabled else text
 
 
+INLINE_BYTES = 34
+"""Values up to this size are shown whole.
+
+A 32-byte hash is the thing you want to copy, and a little headroom above it keeps the
+slightly-larger values that carry one -- a hash inside a short structure, say -- readable too.
+"""
+
+
 def _abbrev(value: bytes) -> str:
-    h = value.hex()
-    return h if len(h) <= 20 else f"{h[:10]}…{h[-6:]}"
+    h = bytes(value).hex()
+    return h if len(h) <= 20 else f"{h[:10]}\u2026{h[-6:]}"
 
 
-def _fmt_value(name: str, value: Any, colour: bool) -> str:
+ELEMENT_BYTES = 10
+"""Budget for an element inside an inline list.
+
+A list rendered on one line has to fit several values, so each gets far less room than a
+field of its own. Enough to recognise a value and tell it from its neighbours; use --details
+to read one properly.
+"""
+
+
+def _fmt_bytes(value: bytes, full: bool, limit: int = INLINE_BYTES) -> str:
+    """Hex, whole up to the limit, truncated beyond it unless asked for in full."""
+    raw = bytes(value)
+    if not raw:
+        return "()"
+    text = raw.hex()
+    if full or len(raw) <= limit:
+        return text
+    return f"{text[: limit * 2]}\u2026 ({len(raw)} bytes)"
+
+
+def _list_items(value: Any) -> Optional[list]:
+    """The elements of value if it is a sequence worth breaking apart, else None.
+
+    A Program that is a proper list counts: its elements are usually the solution args, and
+    reading them side by side on one line is what made the old output unusable.
+    """
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, Program):
+        if value.atom is not None:
+            return None
+        try:
+            return list(value.as_iter())
+        except Exception:  # noqa: BLE001 - an improper list is rendered as a scalar
+            return None
+    return None
+
+
+def _fmt_value(
+    name: str, value: Any, colour: bool, full: bool = False, limit: int = INLINE_BYTES
+) -> str:
+    """A single value on one line. Sequences are expanded by _render_field instead."""
     if value is None:
         return _colour(colour, DIM, "None")
     if isinstance(value, bool):
         return str(value)
     if isinstance(value, (bytes, bytearray)):
-        return _abbrev(bytes(value))
+        return _fmt_bytes(value, full, limit)
     if isinstance(value, int):
+        # Large values are printed as they are. It is tempting to read anything near 2**64 as
+        # a negative serialised unsigned, but BYC amounts legitimately reach Chia's
+        # MAX_COIN_AMOUNT of 2**64-1 during a flashloan, and CAT ring subtotals follow the
+        # amounts, so that reading would misreport real values.
         if name in BYC_FIELDS:
-            return f"{value:,} {_colour(colour, DIM, f'({value / MCAT:.3f} BYC)')}"
+            return f"{value:,} {_colour(colour, DIM, f'({_scaled(value, MCAT, 3)} BYC)')}"
         if name in CRT_FIELDS:
-            return f"{value:,} {_colour(colour, DIM, f'({value / MCAT:.3f} CRT)')}"
+            return f"{value:,} {_colour(colour, DIM, f'({_scaled(value, MCAT, 3)} CRT)')}"
         if name in XCH_FIELDS:
-            return f"{value:,} {_colour(colour, DIM, f'({value / MOJOS:.12g} XCH)')}"
+            return f"{value:,} {_colour(colour, DIM, f'({_scaled(value, MOJOS, 12, strip=True)} XCH)')}"
         return f"{value:,}"
     if isinstance(value, Program):
-        h = value.as_bin().hex()
-        return h if len(h) <= 40 else f"{h[:20]}… ({len(h) // 2} bytes)"
+        atom = value.atom
+        if atom is not None:
+            return _fmt_bytes(atom, full, limit) if atom else "()"
+        # A list Program serialises to the form CLVM tools accept, which is what makes it
+        # worth copying whole.
+        return _fmt_bytes(value.as_bin(), full, limit)
     if isinstance(value, (list, tuple)):
         if not value:
-            return "[]"
-        return "[" + ", ".join(_fmt_value(name, v, colour) for v in value[:4]) + ("…]" if len(value) > 4 else "]")
+            return "()"
+        # Each element gets the smaller budget, since they share one line.
+        return "[" + ", ".join(
+            _fmt_value(name, v, colour, full, ELEMENT_BYTES) for v in value
+        ) + "]"
     return str(value)
 
 
-def render_spend(parsed, *, verbose: bool = False, colour: bool = True) -> str:
+MAX_NESTING = 3
+"""How deep to keep breaking sequences apart before rendering one inline."""
+
+
+def _render_field(
+    label: str,
+    name: str,
+    value: Any,
+    *,
+    colour: bool,
+    full: bool,
+    indent: str,
+    details: bool = False,
+    depth: int = 0,
+) -> list:
+    """Lines for one field.
+
+    Expanding sequences and truncating long values are independent choices, so they are
+    separate flags: the compact default does neither in the way that adds lines, --details
+    expands, --full stops truncating.
+    """
+    items = _list_items(value) if details else None
+    if items is None or depth >= MAX_NESTING:
+        return [f"{indent}{label} {_fmt_value(name, value, colour, full)}"]
+    if not items:
+        return [f"{indent}{label} {_colour(colour, DIM, '()')}"]
+    lines = [f"{indent}{label}"]
+    for i, item in enumerate(items):
+        lines.extend(
+            _render_field(
+                _colour(colour, DIM, f"[{i}]"),
+                name,
+                item,
+                colour=colour,
+                full=full,
+                indent=indent + "  ",
+                details=details,
+                depth=depth + 1,
+            )
+        )
+    return lines
+
+
+# Puzzles and raw solution blobs: reveals rather than data, and long enough to bury
+# everything else. Available with -v.
+NOISY_FIELDS = frozenset({
+    "inner_puzzle", "inner_solution", "solution", "operation", "solution_or_conditions",
+    "final_output_conditions", "inner_conditions",
+})
+
+
+def _fmt_coin_amount(parsed, colour: bool) -> str:
+    """The coin's own amount, with the units it is denominated in.
+
+    A CAT coin's amount is in the asset's smallest unit; everything else is mojos. Circuit's
+    CATs use three decimals, as most Chia CATs do, so an unrecognised asset is shown that way
+    too -- labelled CAT rather than guessed at by name.
+    """
+    if parsed.layer == "CAT":
+        unit = parsed.asset if parsed.asset in ("BYC", "CRT") else "CAT"
+        converted = f"{_scaled(parsed.amount, MCAT, 3)} {unit}"
+    else:
+        converted = f"{_scaled(parsed.amount, MOJOS, 12, strip=True)} XCH"
+    return f"{parsed.amount:,} {_colour(colour, DIM, f'({converted})')}"
+
+
+def render_spend(
+    parsed, *, verbose: bool = False, colour: bool = True, full: bool = False, details: bool = False
+) -> str:
     """One spend, as a header line plus the driver's fields."""
     lines = []
     head = f"[{parsed.index}] {_colour(colour, BOLD, parsed.coin_type)}"
     lines.append(f"{head}  {_colour(colour, DIM, parsed.coin_id)}")
-    lines.append(f"     {_colour(colour, DIM, 'amount')} {parsed.amount:,}")
+    lines.append(f"     {_colour(colour, DIM, 'amount  ')} {_fmt_coin_amount(parsed, colour)}")
+    # Asset and launcher are separate from the role because they are independent facts: a
+    # treasury coin and a coin someone is holding are both BYC. Both are shown whole: an
+    # abbreviated launcher or asset ID cannot be looked up or pasted anywhere.
+    if parsed.layer:
+        lines.append(f"     {_colour(colour, DIM, 'layer   ')} {parsed.layer}")
+    if parsed.asset:
+        lines.append(f"     {_colour(colour, DIM, 'asset   ')} {parsed.asset}")
+    if parsed.launcher_id:
+        lines.append(f"     {_colour(colour, DIM, 'launcher')} {parsed.launcher_id}")
 
     if parsed.failed:
         lines.append(f"     {_colour(colour, RED, 'PARSE FAILED')} {parsed.error}")
@@ -93,22 +246,33 @@ def render_spend(parsed, *, verbose: bool = False, colour: bool = True) -> str:
             lines.append(f"     {_colour(colour, YELLOW, prefix)} {note_line.strip().rstrip('.')}.")
     if dataclasses.is_dataclass(parsed.info):
         for field in dataclasses.fields(parsed.info):
-            # Programs and conditions are noise unless asked for.
-            if not verbose and field.name in (
-                "inner_puzzle", "inner_solution", "solution", "operation", "lineage_proof",
-                "final_output_conditions", "inner_conditions", "args", "args_and_memos",
-                "solution_or_conditions", "rest_of_condition", "mutation", "rebalance_args",
-            ):
+            if not verbose and field.name in NOISY_FIELDS:
                 continue
             value = getattr(parsed.info, field.name, None)
-            lines.append(f"       {field.name:<34} {_fmt_value(field.name, value, colour)}")
+            lines.extend(
+                _render_field(
+                    f"{field.name:<34}",
+                    field.name,
+                    value,
+                    colour=colour,
+                    full=full,
+                    indent="       ",
+                    details=details,
+                )
+            )
     else:
         lines.append(f"       {parsed.info}")
     return "\n".join(lines)
 
 
-def render_bundle(parsed_spends, *, verbose: bool = False, colour: bool = True) -> str:
-    body = "\n".join(render_spend(p, verbose=verbose, colour=colour) for p in parsed_spends)
+def render_bundle(
+    parsed_spends, *, verbose: bool = False, colour: bool = True, full: bool = False,
+    details: bool = False,
+) -> str:
+    body = "\n".join(
+        render_spend(p, verbose=verbose, colour=colour, full=full, details=details)
+        for p in parsed_spends
+    )
     failed = sum(1 for p in parsed_spends if p.failed)
     unclaimed = sum(1 for p in parsed_spends if not p.failed and p.info is None)
     summary = f"{len(parsed_spends)} spend(s)"
@@ -127,6 +291,8 @@ def render_block(
     total_spends: int,
     verbose: bool = False,
     colour: bool = True,
+    full: bool = False,
+    details: bool = False,
 ) -> str:
     """A block's selected spends, each showing why it was pulled in.
 
@@ -152,7 +318,7 @@ def render_block(
                 if link
                 else _colour(colour, YELLOW, str(block_spend.reason))
             )
-        lines.append(render_spend(parsed, verbose=verbose, colour=colour))
+        lines.append(render_spend(parsed, verbose=verbose, colour=colour, full=full, details=details))
         lines.append(f"     {_colour(colour, DIM, 'included:')} {why}")
         if block_spend.condition_error:
             lines.append(f"     {_colour(colour, DIM, 'conditions unavailable:')} {block_spend.condition_error}")

@@ -137,7 +137,9 @@ def _load_coin_spends(source: str):
         )
 
 
-def _parse(source: str, verbose: bool, as_json: bool, colour: bool) -> None:
+def _parse(
+    source: str, verbose: bool, as_json: bool, colour: bool, full: bool, details: bool
+) -> None:
     from circuit_analytics.parse import parse_spend_bundle
     from circuit_analytics.render import render_bundle
 
@@ -154,13 +156,16 @@ def _parse(source: str, verbose: bool, as_json: bool, colour: bool) -> None:
                 "puzzle_hash": p.puzzle_hash,
                 "amount": p.amount,
                 "coin_type": p.coin_type,
+                "layer": p.layer,
+                "asset": p.asset,
+                "launcher_id": p.launcher_id,
                 "info": type(p.info).__name__ if p.info is not None else None,
                 "error": p.error,
             }
             for p in parsed
         ], indent=2))
     else:
-        print(render_bundle(parsed, verbose=verbose, colour=colour))
+        print(render_bundle(parsed, verbose=verbose, colour=colour, full=full, details=details))
 
     if any(p.failed for p in parsed):
         raise SystemExit(1)
@@ -189,7 +194,10 @@ async def _fetch_block_spends_for(height: int | None, header_hash: str | None):
         await client.await_closed()
 
 
-def _parse_block(height, header_hash, verbose: bool, as_json: bool, colour: bool, everything: bool) -> None:
+def _parse_block(
+    height, header_hash, verbose: bool, as_json: bool, colour: bool, everything: bool, full: bool,
+    details: bool,
+) -> None:
     from circuit_analytics.linkage import collect_block_spends
     from circuit_analytics.parse import parse_coin_spend, protocol_coin_type
     from circuit_analytics.render import render_block
@@ -220,6 +228,9 @@ def _parse_block(height, header_hash, verbose: bool, as_json: bool, colour: bool
                     "index": b.index,
                     "coin_id": r.coin_id,
                     "coin_type": r.coin_type,
+                    "layer": r.layer,
+                    "asset": r.asset,
+                    "launcher_id": r.launcher_id,
                     "reason": b.reason,
                     "links": [
                         {"source_index": link.source_index, "via": link.via, "detail": link.detail}
@@ -234,7 +245,8 @@ def _parse_block(height, header_hash, verbose: bool, as_json: bool, colour: bool
     else:
         print(render_block(
             parsed, height=record.height, header_hash=record.header_hash.hex(),
-            total_spends=len(all_spends), verbose=verbose, colour=colour,
+            total_spends=len(all_spends), verbose=verbose, colour=colour, full=full,
+            details=details,
         ))
 
     if any(r.failed for _b, r in parsed):
@@ -296,6 +308,18 @@ def main() -> None:
         help="include every spend in the block, not just protocol coins and what is tied to them",
     )
     parse_p.add_argument("-v", "--verbose", action="store_true", help="include puzzles, solutions and conditions")
+    parse_p.add_argument(
+        "-d",
+        "--details",
+        action="store_true",
+        help="break sequences out, one element per line",
+    )
+    parse_p.add_argument(
+        "-f",
+        "--full",
+        action="store_true",
+        help="show every value in full on one line, for copying",
+    )
     parse_p.add_argument("--json", action="store_true", dest="as_json", help="machine-readable summary")
     parse_p.add_argument("--no-color", action="store_true", help="disable colour")
     _add_node_args(parse_p)
@@ -350,7 +374,11 @@ def main() -> None:
         if by_block:
             _parse_block(
                 args.height, args.header_hash, args.verbose, args.as_json,
-                colour=not args.no_color, everything=args.everything,
+                colour=not args.no_color, everything=args.everything, full=args.full,
+                details=args.details,
             )
         else:
-            _parse(args.source, args.verbose, args.as_json, colour=not args.no_color)
+            _parse(
+                args.source, args.verbose, args.as_json, colour=not args.no_color,
+                full=args.full, details=args.details,
+            )

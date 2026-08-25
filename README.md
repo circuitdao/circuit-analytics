@@ -81,7 +81,27 @@ spend reports why it was included:
 That last line is the point: a spend of an ordinary XCH coin means nothing on its own, and
 everything once you can see it paid the fee for the vault spend above it.
 
-Options: `-v` includes puzzles, solutions and conditions; `--json` gives a machine-readable
+Coins that merely *hold* BYC or CRT — a wallet coin, or one locked in an offer — are not
+treated as protocol coins, so two people trading BYC does not show up as protocol activity.
+They appear when something ties them to a protocol spend, and then the link says what.
+
+By default every field is one line, truncated past 34 bytes — compact enough to scan a whole
+block. Two options change that, and they are independent:
+
+- `-d`/`--details` breaks sequences out, one element per line, so an individual hash can be
+  read and copied. Values are still truncated.
+- `-f`/`--full` stops truncating, keeping every argument on one line for pasting elsewhere. A
+  list argument appears in its serialised form, which is what CLVM tools accept.
+
+Giving both expands sequences *and* shows them whole.
+
+The 34-byte cutoff covers hashes, launcher IDs, asset IDs and the slightly larger structures
+that carry one, since an abbreviated hash cannot be looked up or pasted anywhere. Elements
+inside a list share one line, so they are cut to 10 bytes — enough to tell them apart, with
+`--details` to read one properly. Coin amounts
+are shown in their own units: BYC, CRT or XCH.
+
+Also: `-v` includes puzzle reveals and raw solutions; `--json` gives a machine-readable
 summary; `--no-color` disables colour. The exit code is non-zero if any spend fails to parse
 — that is what a driver whose expected solution shape has drifted from its puzzle looks like,
 and the same failure stalls the block scanner at that block.
