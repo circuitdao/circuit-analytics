@@ -414,7 +414,7 @@ class StatutesSolutionInfo:
             mutation_index,
             _,
         ) = to_list(
-            self.mutation, [None, "int", None]
+            self.mutation, 3, [None, "int", None]
         )  # TODO: check canonical representation of mutation_index (puzzle rejects non-canonical encodings)
         return mutation_index
 
@@ -430,13 +430,14 @@ class StatutesSolutionInfo:
         return mutation_value
 
 
+@dataclass
 class StatutesMutationInfo(StatutesSolutionInfo):
-    mutation_index: int
-    mutation_value: Program
+    # mutation_index and mutation_value are not fields: the base class already derives both
+    # from self.mutation as properties. Redeclaring them here would shadow those properties,
+    # and dataclasses would read the inherited property objects as defaults, which in turn
+    # makes every subclass field a non-default following a default.
 
     def __post_init__(self):
-        # we're overwriting a base class method, so make sure it's returning the same value
-        assert self.mutation_value == super().mutation_value
         # we overwrite base class method in order to log warnings if an unexpected Statute value were passed
         if self.mutation_index == -1:
             # should be one or more conditions, ie not an atom
@@ -477,10 +478,12 @@ class StatutesMutationInfo(StatutesSolutionInfo):
         return tree_hash_of_apply(GOVERNANCE_MOD_HASH, self.governance_curried_args_hash)
 
 
+@dataclass
 class StatutesCustomConditionsInfo(StatutesMutationInfo):
     custom_conditions: list[Program]  # from mutation_value.first()
 
 
+@dataclass
 class StatutesUpdateStatuteInfo(StatutesMutationInfo):
     value: Program  # mutation_value.first()
     proposal_threshold: Program
@@ -519,12 +522,14 @@ class StatutesUpdateStatuteInfo(StatutesMutationInfo):
             )
 
 
+@dataclass
 class StatutesUpdatePriceInfo(StatutesSolutionInfo):
     oracle_inner_puzzle_hash: bytes32
     oracle_price: int
     oracle_price_timestamp: int
 
 
+@dataclass
 class StatutesAnnounceInfo(StatutesSolutionInfo):
     pass
 
@@ -600,11 +605,7 @@ def get_statutes_solution_info(coin_spend: CoinSpend) -> StatutesSolutionInfo:
                 f"Statutes mutation operation must have mutation index between -1 and "
                 f"{StatutePosition.max_statutes_idx()} included, got {solution_info.mutation_index}"
             )
-        solution_info = StatutesMutationInfo(
-            **solution_info.__dict__,
-            mutation_index=solution_info.mutation_index,
-            mutation_value=solution_info.mutation_value,
-        )
+        solution_info = StatutesMutationInfo(**solution_info.__dict__)
         if solution_info.mutation_index == -1:
             # custom conditions announcement
             try:
