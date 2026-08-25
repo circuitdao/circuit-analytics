@@ -27,7 +27,10 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.ruff]
 line-length = 120
-fix = true
+# `ruff check` only reports; apply fixes explicitly with `ruff check --fix` so they can be
+# reviewed. Auto-fix-on-check silently rewrites files, including stripping re-exported
+# imports that look unused.
+fix = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
